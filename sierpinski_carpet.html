@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Sierpinski Carpet - WebGL</title>
+
+<!-- Vertex Shader -->
+<script id="vertex-shader" type="x-shader/x-vertex">
+attribute vec2 aPosition;
+void main() {
+    gl_Position = vec4(aPosition, 0.0, 1.0);
+}
+</script>
+
+<!-- Fragment Shader -->
+<script id="fragment-shader" type="x-shader/x-fragment">
+precision mediump float;
+uniform vec4 uColor;
+void main() {
+    gl_FragColor = uColor;
+}
+</script>
+
+<!-- 자바스크립트 로직 (합쳐진 파일) -->
+<script>
+"use strict";
+
+var gl;
+var canvas;
+var program;
+
+var positionLoc;
+var colorLoc;
+
+var currentLevel = 3;
+var currentColor = [0.0, 0.0, 0.0, 1.0]; // 기본값: 검정
+
+// 드롭박스에서 선택 가능한 색상 목록
+var colorTable = {
+    "black":  [0.0, 0.0, 0.0, 1.0],
+    "red":    [1.0, 0.0, 0.0, 1.0],
+    "green":  [0.0, 0.6, 0.0, 1.0],
+    "blue":   [0.0, 0.0, 1.0, 1.0],
+    "orange": [1.0, 0.5, 0.0, 1.0],
+    "purple": [0.5, 0.0, 0.5, 1.0]
+};
+
+function init() {
+    canvas = document.getElementById("gl-canvas");
+
+    gl = canvas.getContext("webgl");
+    if (!gl) {
+        alert("WebGL을 사용할 수 없습니다.");
+        return;
+    }
+
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(1.0, 1.0, 1.0, 1.0);
+
+    program = initShaders(gl, "vertex-shader", "fragment-shader");
+    gl.useProgram(program);
+
+    positionLoc = gl.getAttribLocation(program, "aPosition");
+    colorLoc = gl.getUniformLocation(program, "uColor");
+
+    // 초기 드롭박스 값과 상태 동기화
+    var levelSelect = document.getElementById("levelSelect");
+    var colorSelect = document.getElementById("colorSelect");
+    currentLevel = parseInt(levelSelect.value);
+    currentColor = colorTable[colorSelect.value];
+
+    render();
+}
+
+function updateLevel() {
+    var levelSelect = document.getElementById("levelSelect");
+    currentLevel = parseInt(levelSelect.value);
+    render();
+}
+
+function updateColor() {
+    var colorSelect = document.getElementById("colorSelect");
+    currentColor = colorTable[colorSelect.value];
+    render();
+}
+
+// (cx, cy)를 중심으로 하고 한 변의 길이가 size인 정사각형을
+// 두 개의 삼각형(6개 정점)으로 만들어 points 배열에 추가한다.
+function addSquare(cx, cy, size, points) {
+    var h = size / 2;
+
+    var x0 = cx - h, x1 = cx + h;
+    var y0 = cy - h, y1 = cy + h;
+
+    // 삼각형 1
+    points.push(x0, y0);
+    points.push(x1, y0);
+    points.push(x1, y1);
+
+    // 삼각형 2
+    points.push(x0, y0);
+    points.push(x1, y1);
+    points.push(x0, y1);
+}
+
+// Sierpinski Carpet 재귀 분할
+// 정사각형을 3x3(9칸)으로 나누고 가운데 칸을 제외한 8칸에 대해 재귀 호출
+function divideSquare(cx, cy, size, level, points) {
+    if (level === 0) {
+        addSquare(cx, cy, size, points);
+        return;
+    }
+
+    var newSize = size / 3;
+
+    for (var i = -1; i <= 1; i++) {
+        for (var j = -1; j <= 1; j++) {
+            if (i === 0 && j === 0) continue; // 가운데 칸은 제거
+            divideSquare(cx + i * newSize, cy + j * newSize, newSize, level - 1, points);
+        }
+    }
+}
+
+function render() {
+    var points = [];
+
+    // 캔버스 전체(클립 좌표 -1 ~ 1, 한 변 길이 2)를 기준으로 분할 시작
+    divideSquare(0.0, 0.0, 2.0, currentLevel, points);
+
+    var vertices = new Float32Array(points);
+
+    var bufferId = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufferId);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+    gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(positionLoc);
+
+    gl.uniform4fv(colorLoc, currentColor);
+
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+}
+
+// ---- 셰이더 컴파일 헬퍼 (외부 라이브러리 없이 직접 구현) ----
+function initShaders(gl, vertexShaderId, fragmentShaderId) {
+    var vertShdr = compileShader(gl, vertexShaderId, gl.VERTEX_SHADER);
+    var fragShdr = compileShader(gl, fragmentShaderId, gl.FRAGMENT_SHADER);
+
+    var program = gl.createProgram();
+    gl.attachShader(program, vertShdr);
+    gl.attachShader(program, fragShdr);
+    gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        alert("셰이더 프로그램 링크 실패: " + gl.getProgramInfoLog(program));
+        return null;
+    }
+
+    return program;
+}
+
+function compileShader(gl, scriptId, type) {
+    var shaderScript = document.getElementById(scriptId);
+    var source = shaderScript.text;
+
+    var shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        alert("셰이더 컴파일 실패: " + gl.getShaderInfoLog(shader));
+        return null;
+    }
+
+    return shader;
+}
+</script>
+</head>
+<body onload="init()">
+
+<p>
+    분할 횟수:
+    <select id="levelSelect" onchange="updateLevel()">
+        <option value="0">0</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+    </select>
+
+    색상:
+    <select id="colorSelect" onchange="updateColor()">
+        <option value="black" selected>검정</option>
+        <option value="red">빨강</option>
+        <option value="green">초록</option>
+        <option value="blue">파랑</option>
+        <option value="orange">주황</option>
+        <option value="purple">보라</option>
+    </select>
+</p>
+
+<canvas id="gl-canvas" width="512" height="512">
+    이 브라우저는 canvas를 지원하지 않습니다.
+</canvas>
+
+</body>
+</html>
